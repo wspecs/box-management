@@ -85,12 +85,15 @@ unzip -q /tmp/bootstrap.zip -d $assets_dir
 mv $assets_dir/bootstrap-$bootstrap_version-dist $assets_dir/bootstrap
 rm -f /tmp/bootstrap.zip
 
+cp -r conf $inst_dir
+cp -r tools $inst_dir
+cp -r management $inst_dir
 # Create an init script to start the management daemon and keep it
 # running after a reboot.
 cat > $inst_dir/start <<EOF
 #!/bin/bash
 source $venv/bin/activate
-exec python `pwd`/management/daemon.py
+exec python $inst_dir/management/daemon.py
 EOF
 chmod +x $inst_dir/start
 cp --remove-destination wspecsbox.service /lib/systemd/system/wspecsbox.service # target was previously a symlink so remove it first
