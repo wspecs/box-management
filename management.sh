@@ -88,6 +88,7 @@ rm -f /tmp/bootstrap.zip
 cp -r conf $inst_dir
 cp -r tools $inst_dir
 cp -r management $inst_dir
+find $inst_dir -type f -exec sed -i "s/phpPHP_VERSION/php$PHP_VERSION/g" {} \;
 # Create an init script to start the management daemon and keep it
 # running after a reboot.
 cat > $inst_dir/start <<EOF
