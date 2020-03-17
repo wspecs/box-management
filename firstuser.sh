@@ -5,7 +5,8 @@ source /etc/wspecs/functions.sh
 
 # If there aren't any mail users yet, create one.
 if [ -z "`tools/mail.py user`" ]; then
-  EMAIL_ADDR=wspecs@$PRIMARY_HOSTNAME
+  HOST=$(echo $PRIMARY_HOSTNAME | sed s/^box.//)
+  EMAIL_ADDR=wspecs@$HOST
   USER_SECRET=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-64)
   add_config USER_SECRET=$USER_SECRET $HOME/.wspecsbox.conf
   echo
