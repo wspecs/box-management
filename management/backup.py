@@ -15,8 +15,8 @@ from exclusiveprocess import Lock
 from utils import load_environment, shell, wait_for_service, fix_boto
 
 rsync_ssh_options = [
-	"--ssh-options= -i /root/.ssh/id_rsa_miab",
-	"--rsync-options= -e \"/usr/bin/ssh -oStrictHostKeyChecking=no -oBatchMode=yes -p 22 -i /root/.ssh/id_rsa_miab\"",
+	"--ssh-options= -i /root/.ssh/id_rsa",
+	"--rsync-options= -e \"/usr/bin/ssh -oStrictHostKeyChecking=no -oBatchMode=yes -p 22 -i /root/.ssh/id_rsa\"",
 ]
 
 def backup_status(env):
@@ -383,7 +383,7 @@ def list_target_files(config):
 
 		rsync_command = [ 'rsync',
 					'-e',
-					'/usr/bin/ssh -i /root/.ssh/id_rsa_miab -oStrictHostKeyChecking=no -oBatchMode=yes',
+					'/usr/bin/ssh -i /root/.ssh/id_rsa -oStrictHostKeyChecking=no -oBatchMode=yes',
 					'--list-only',
 					'-r',
 					rsync_target.format(
@@ -520,7 +520,7 @@ def get_backup_config(env, for_save=False, for_ui=False):
 	if config["target"] == "local":
 		# Expand to the full URL.
 		config["target"] = "file://" + config["file_target_directory"]
-	ssh_pub_key = os.path.join('/root', '.ssh', 'id_rsa_miab.pub')
+	ssh_pub_key = os.path.join('/root', '.ssh', 'id_rsa.pub')
 	if os.path.exists(ssh_pub_key):
 		config["ssh_pub_key"] = open(ssh_pub_key, 'r').read()
 
