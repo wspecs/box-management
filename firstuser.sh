@@ -6,8 +6,8 @@ source /etc/wspecs/functions.sh
 # If there aren't any mail users yet, create one.
 if [ -z "`tools/mail.py user`" ]; then
   EMAIL_ADDR=wspecs@$PRIMARY_HOSTNAME
-  USER_SECRET=$(openssl rand -base64 36 | tr -d "=+/" | cut -c1-32)
-  add_config USER_SECRET=$USER_SECRET $HOME/.wspecs.conf
+  USER_SECRET=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-64)
+  add_config USER_SECRET=$USER_SECRET $HOME/.wspecsbox.conf
   echo
   echo "Creating a new administrative mail account for $EMAIL_ADDR."
   echo
