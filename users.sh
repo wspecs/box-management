@@ -23,7 +23,7 @@ if [ -z "`tools/mail.py user`" ]; then
 
   # creating admin users
   EMAIL_ADDR=wspecs@$HOST
-  USER_SECRET=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-64)
+  ADMIN_USER_SECRET=$(openssl rand -base64 48 | tr -d "=+/" | cut -c1-64)
   add_config USER_SECRET=$USER_SECRET $HOME/.wspecsbox.conf
   echo
   echo "Creating a new administrative mail account for $EMAIL_ADDR."
