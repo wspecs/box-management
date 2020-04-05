@@ -310,7 +310,7 @@ def run_domain_checks(rounded_time, env, output, pool):
 	domains_to_check = mail_domains | dns_domains | web_domains
 
 	# Get the list of domains that we don't serve web for because of a custom CNAME/A record.
-	domains_with_a_records = get_domains_with_a_records(env)
+	domains_with_a_records = get_domains_with_a_records(env, local=True, external=False)
 
 	# Serial version:
 	#for domain in sort_domains(domains_to_check, env):

@@ -11,7 +11,7 @@ from utils import shell, safe_domain_name, sort_domains
 
 def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True):
 	# What domains should we serve HTTP(S) for?
-	domains = set()
+	domains = get_domains_with_a_records(env, local=True, external=False)
 
 	# Serve web for all mail domains so that we might at least
 	# provide auto-discover of email settings, and also a static website
@@ -30,11 +30,6 @@ def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True)
 	domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env))
 	domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env))
 
-	if exclude_dns_elsewhere:
-		# ...Unless the domain has an A/AAAA record that maps it to a different
-		# IP address than this box. Remove those domains from our list.
-		domains -= get_domains_with_a_records(env)
-
 	# Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail
 	# as well as Z-Push for Exchange ActiveSync. This can't be removed
 	# by a custom A/AAAA record and is never a 'www.' redirect.
@@ -45,11 +40,15 @@ def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True)
 
 	return domains
 
-def get_domains_with_a_records(env):
+def get_domains_with_a_records(env, local=False, external=True):
 	domains = set()
 	dns = get_custom_dns_config(env)
 	for domain, rtype, value in dns:
-		if rtype == "CNAME" or (rtype in ("A", "AAAA") and value not in ("local", env['PUBLIC_IP'])):
+		if not external and value not in (env['PUBLIC_IP']):
+			continue
+		if not local and value in (env['PUBLIC_IP']):
+			continue
+		if rtype == "CNAME" or rtype in ("A", "AAAA"):
 			domains.add(domain)
 	return domains
 
