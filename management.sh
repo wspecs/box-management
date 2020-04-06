@@ -123,6 +123,7 @@ done
 
 # ...and then have it write the DNS and nginx configuration files and start those
 # services.
+mkdir -p /etc/nginx/conf.d/partials
 tools/dns_update
 tools/web_update
 
