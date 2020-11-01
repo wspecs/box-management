@@ -1,9 +1,9 @@
-#!/usr/local/lib/wspecsbox/env/bin/python
+#!/usr/local/lib/mailinabox/env/bin/python
 
 # NOTE:
 # This script is run both using the system-wide Python 3
 # interpreter (/usr/bin/python3) as well as through the
-# virtualenv (/usr/local/lib/wspecsbox/env). So only
+# virtualenv (/usr/local/lib/mailinabox/env). So only
 # import packages at the top level of this script that
 # are installed in *both* contexts. We use the system-wide
 # Python 3 in setup/questions.sh to validate the email
@@ -258,13 +258,15 @@ def get_domain(emailaddr, as_unicode=True):
 			pass
 	return ret
 
-def get_mail_domains(env, filter_aliases=lambda alias : True):
+def get_mail_domains(env, filter_aliases=lambda alias : True, users_only=False):
 	# Returns the domain names (IDNA-encoded) of all of the email addresses
-	# configured on the system.
-	return set(
-		   [get_domain(login, as_unicode=False) for login in get_mail_users(env)]
-		 + [get_domain(address, as_unicode=False) for address, *_ in get_mail_aliases(env) if filter_aliases(address) ]
-		 )
+	# configured on the system. If users_only is True, only return domains
+	# with email addresses that correspond to user accounts.
+	domains = []
+	domains.extend([get_domain(login, as_unicode=False) for login in get_mail_users(env)])
+	if not users_only:
+		domains.extend([get_domain(address, as_unicode=False) for address, *_ in get_mail_aliases(env) if filter_aliases(address) ])
+	return set(domains)
 
 def add_mail_user(email, pw, privs, env):
 	# validate email
@@ -603,8 +605,6 @@ def validate_password(pw):
 	# validate password
 	if pw.strip() == "":
 		raise ValueError("No password provided.")
-	if re.search(r"[\s]", pw):
-		raise ValueError("Passwords cannot contain spaces.")
 	if len(pw) < 8:
 		raise ValueError("Passwords must be at least eight characters.")
 
