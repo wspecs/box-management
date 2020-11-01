@@ -34,7 +34,7 @@ hide_output pip3 install --upgrade boto
 
 # Create a virtualenv for the installation of Python 3 packages
 # used by the management daemon.
-inst_dir=/usr/local/lib/wspecsbox
+inst_dir=/usr/local/lib/mailinabox
 mkdir -p $inst_dir
 venv=$inst_dir/env
 if [ ! -d $venv ]; then
@@ -50,7 +50,7 @@ hide_output $venv/bin/pip install --upgrade pip
 hide_output $venv/bin/pip install --upgrade \
 	rtyaml "email_validator>=1.0.0" "exclusiveprocess" \
 	flask dnspython python-dateutil \
-	"idna>=2.0.0" "cryptography==2.2.2" boto psutil
+	"idna>=2.0.0" "cryptography==2.2.2" boto psutil postfix-mta-sts-resolver
 
 # CONFIGURATION
 
@@ -94,7 +94,7 @@ find $inst_dir -type f -exec sed -i "s/phpPHP_VERSION/php$PHP_VERSION/g" {} \;
 cat > $inst_dir/start <<EOF
 #!/bin/bash
 source $venv/bin/activate
-exec python $inst_dir/management/daemon.py
+exec python3 $inst_dir/management/daemon.py
 EOF
 chmod +x $inst_dir/start
 cp --remove-destination wspecsbox.service /lib/systemd/system/wspecsbox.service # target was previously a symlink so remove it first
