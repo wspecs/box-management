@@ -271,7 +271,7 @@ class OtherLine(Grammar):
 	def value(self):
 		if self.string.strip() == "": return ""
 		if "source setup/functions.sh" in self.string: return ""
-		if "source /etc/wspecsbox.conf" in self.string: return ""
+		if "source /etc/wspecs/global.conf" in self.string: return ""
 		return "<pre class='shell'><div>" + recode_bash(self.string.strip()) + "</div></pre>\n"
 
 class BashElement(Grammar):
@@ -396,7 +396,7 @@ class BashScript(Grammar):
 
 	@staticmethod
 	def parse(fn):
-		if fn in ("setup/functions.sh", "/etc/wspecsbox.conf"): return ""
+		if fn in ("setup/functions.sh", "/etc/wspecs/global.conf"): return ""
 		string = open(fn).read()
 
 		# tokenize
