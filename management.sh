@@ -34,7 +34,7 @@ hide_output pip3 install --upgrade boto
 
 # Create a virtualenv for the installation of Python 3 packages
 # used by the management daemon.
-inst_dir=/usr/local/lib/mailinabox
+inst_dir=/usr/local/lib/wspecsbox
 mkdir -p $inst_dir
 venv=$inst_dir/env
 if [ ! -d $venv ]; then
