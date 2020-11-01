@@ -7,7 +7,7 @@ from flask import Flask, request, render_template, abort, Response, send_from_di
 
 import auth, utils, multiprocessing.pool
 from mailconfig import get_mail_users, get_mail_users_ex, get_admins, add_mail_user, set_mail_password, remove_mail_user
-from mailconfig import get_mail_user_privileges, add_remove_mail_user_privilege
+from mailconfig import get_mail_user_privileges, add_remove_mail_user_privilege, open_database
 from mailconfig import get_mail_aliases, get_mail_aliases_ex, get_mail_domains, add_mail_alias, remove_mail_alias
 
 env = utils.load_environment()
@@ -101,9 +101,12 @@ def index():
 	utils.fix_boto() # must call prior to importing boto
 	import boto.s3
 	backup_s3_hosts = [(r.name, r.endpoint) for r in boto.s3.regions()]
+	lsb=utils.shell("check_output", ["/usr/bin/lsb_release", "-d"])
 
 	return render_template('index.html',
 		hostname=env['PRIMARY_HOSTNAME'],
+		distname=lsb[lsb.find("\t")+1:-1],
+		
 		storage_root=env['STORAGE_ROOT'],
 
 		no_users_exist=no_users_exist,
@@ -334,7 +337,7 @@ def ssl_get_status():
 
 	# What domains can we provision certificates for? What unexpected problems do we have?
 	provision, cant_provision = get_certificates_to_provision(env, show_valid_certs=False)
-	
+
 	# What's the current status of TLS certificates on all of the domain?
 	domains_status = get_web_domains_info(env)
 	domains_status = [
@@ -396,7 +399,10 @@ def web_get_domains():
 @authorized_personnel_only
 def web_update():
 	from web_update import do_web_update
-	return do_web_update(env)
+	try:
+		return do_web_update(env)
+	except Exception as e:
+		return (str(e), 500)
 
 # System
 
@@ -437,9 +443,8 @@ def system_status():
 			self.items[-1]["extra"].append({ "text": message, "monospace": monospace })
 	output = WebOutput()
 	# Create a temporary pool of processes for the status checks
-	pool = multiprocessing.pool.Pool(processes=5)
-	run_checks(False, env, output, pool)
-	pool.terminate()
+	with multiprocessing.pool.Pool(processes=5) as pool:
+		run_checks(False, env, output, pool)
 	return json_response(output.items)
 
 @app.route('/system/updates')
@@ -506,6 +511,19 @@ def backup_set_custom():
 		request.form.get('min_age', '')
 	))
 
+@app.route('/system/backup/new', methods=["POST"])
+@authorized_personnel_only
+def backup_new():
+	from backup import perform_backup, get_backup_config
+
+	# If backups are disabled, don't perform the backup
+	config = get_backup_config(env)
+	if config["target"] == "off":
+		return "Backups are disabled in this machine. Nothing was done."
+
+	msg = perform_backup(request.form.get('full', False) == 'true', True)
+	return "OK" if msg is None else msg
+
 @app.route('/system/privacy', methods=["GET"])
 @authorized_personnel_only
 def privacy_status_get():
@@ -520,6 +538,115 @@ def privacy_status_set():
 	utils.write_settings(config, env)
 	return "OK"
 
+@app.route('/system/smtp/relay', methods=["GET"])
+@authorized_personnel_only
+def smtp_relay_get():
+	config = utils.load_settings(env)
+	return {
+		"enabled": config.get("SMTP_RELAY_ENABLED", True),
+		"host": config.get("SMTP_RELAY_HOST", ""),
+		"auth_enabled": config.get("SMTP_RELAY_AUTH", False),
+		"user": config.get("SMTP_RELAY_USER", "")
+	}
+
+@app.route('/system/smtp/relay', methods=["POST"])
+@authorized_personnel_only
+def smtp_relay_set():
+	from editconf import edit_conf
+	config = utils.load_settings(env)
+	newconf = request.form
+	try:
+		# Write on daemon settings
+		config["SMTP_RELAY_ENABLED"] = (newconf.get("enabled") == "true")
+		config["SMTP_RELAY_HOST"] = newconf.get("host")
+		config["SMTP_RELAY_AUTH"] = (newconf.get("auth_enabled") == "true")
+		config["SMTP_RELAY_USER"] = newconf.get("user")
+		utils.write_settings(config, env)
+		# Write on Postfix configs
+		edit_conf("/etc/postfix/main.cf", [
+			"relayhost=" + (f"[{config['SMTP_RELAY_HOST']}]:587" if config["SMTP_RELAY_ENABLED"] else ""),
+			"smtp_sasl_auth_enable=" + ("yes" if config["SMTP_RELAY_AUTH"] else "no"),
+			"smtp_sasl_security_options=" + ("noanonymous" if config["SMTP_RELAY_AUTH"] else "anonymous"),
+			"smtp_sasl_tls_security_options=" + ("noanonymous" if config["SMTP_RELAY_AUTH"] else "anonymous")
+		], delimiter_re=r"\s*=\s*", delimiter="=", comment_char="#")
+		if config["SMTP_RELAY_AUTH"]:
+			# Edit the sasl password
+			with open("/etc/postfix/sasl_passwd", "w") as f:
+				f.write(f"[{config['SMTP_RELAY_HOST']}]:587 {config['SMTP_RELAY_USER']}:{newconf.get('key')}\n")
+			utils.shell("check_output", ["/usr/bin/chmod", "600", "/etc/postfix/sasl_passwd"], capture_stderr=True)
+			utils.shell("check_output", ["/usr/sbin/postmap", "/etc/postfix/sasl_passwd"], capture_stderr=True)
+		# Restart Postfix
+		return utils.shell("check_output", ["/usr/bin/systemctl", "restart", "postfix"], capture_stderr=True)
+	except Exception as e:
+		return (str(e), 500)
+
+
+# MUNIN
+
+@app.route('/munin/')
+@app.route('/munin/<path:filename>')
+@authorized_personnel_only
+def munin(filename=""):
+	# Checks administrative access (@authorized_personnel_only) and then just proxies
+	# the request to static files.
+	if filename == "": filename = "index.html"
+	return send_from_directory("/var/cache/munin/www", filename)
+
+@app.route('/munin/cgi-graph/<path:filename>')
+@authorized_personnel_only
+def munin_cgi(filename):
+	""" Relay munin cgi dynazoom requests
+	/usr/lib/munin/cgi/munin-cgi-graph is a perl cgi script in the munin package
+	that is responsible for generating binary png images _and_ associated HTTP
+	headers based on parameters in the requesting URL. All output is written
+	to stdout which munin_cgi splits into response headers and binary response
+	data.
+	munin-cgi-graph reads environment variables to determine
+	what it should do. It expects a path to be in the env-var PATH_INFO, and a
+	querystring to be in the env-var QUERY_STRING.
+	munin-cgi-graph has several failure modes. Some write HTTP Status headers and
+	others return nonzero exit codes.
+	Situating munin_cgi between the user-agent and munin-cgi-graph enables keeping
+	the cgi script behind mailinabox's auth mechanisms and avoids additional
+	support infrastructure like spawn-fcgi.
+	"""
+
+	COMMAND = 'su - munin --preserve-environment --shell=/bin/bash -c /usr/lib/munin/cgi/munin-cgi-graph'
+	# su changes user, we use the munin user here
+	# --preserve-environment retains the environment, which is where Popen's `env` data is
+	# --shell=/bin/bash ensures the shell used is bash
+	# -c "/usr/lib/munin/cgi/munin-cgi-graph" passes the command to run as munin
+	# "%s" is a placeholder for where the request's querystring will be added
+
+	if filename == "":
+		return ("a path must be specified", 404)
+
+	query_str = request.query_string.decode("utf-8", 'ignore')
+
+	env = {'PATH_INFO': '/%s/' % filename, 'REQUEST_METHOD': 'GET', 'QUERY_STRING': query_str}
+	code, binout = utils.shell('check_output',
+							   COMMAND.split(" ", 5),
+							   # Using a maxsplit of 5 keeps the last arguments together
+							   env=env,
+							   return_bytes=True,
+							   trap=True)
+
+	if code != 0:
+		# nonzero returncode indicates error
+		app.logger.error("munin_cgi: munin-cgi-graph returned nonzero exit code, %s", code)
+		return ("error processing graph image", 500)
+
+	# /usr/lib/munin/cgi/munin-cgi-graph returns both headers and binary png when successful.
+	# A double-Windows-style-newline always indicates the end of HTTP headers.
+	headers, image_bytes = binout.split(b'\r\n\r\n', 1)
+	response = make_response(image_bytes)
+	for line in headers.splitlines():
+		name, value = line.decode("utf8").split(':', 1)
+		response.headers[name] = value
+	if 'Status' in response.headers and '404' in response.headers['Status']:
+		app.logger.warning("munin_cgi: munin-cgi-graph returned 404 status code. PATH_INFO=%s", env['PATH_INFO'])
+	return response
+
 def log_failed_login(request):
 	# We need to figure out the ip to list in the message, all our calls are routed
 	# through nginx who will put the original ip in X-Forwarded-For.
@@ -533,7 +660,7 @@ def log_failed_login(request):
 
 	# We need to add a timestamp to the log message, otherwise /dev/log will eat the "duplicate"
 	# message.
-	app.logger.warning( "wspecsbox Management Daemon: Failed login attempt from ip %s - timestamp %s" % (ip, time.time()))
+	app.logger.warning( "Mail-in-a-Box Management Daemon: Failed login attempt from ip %s - timestamp %s" % (ip, time.time()))
 
 
 # APP
@@ -546,7 +673,7 @@ if __name__ == '__main__':
 		app.logger.addHandler(utils.create_syslog_handler())
 
 	# For testing on the command line, you can use `curl` like so:
-	#    curl --user $(</var/lib/wspecsbox/api.key): http://localhost:10222/mail/users
+	#    curl --user $(</var/lib/mailinabox/api.key): http://localhost:10222/mail/users
 	auth_service.write_key()
 
 	# For testing in the browser, you can copy the API key that's output to the

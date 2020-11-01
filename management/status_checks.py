@@ -1,15 +1,17 @@
-#!/usr/local/lib/wspecsbox/env/bin/python
+#!/usr/local/lib/mailinabox/env/bin/python
 #
 # Checks that the upstream DNS has been set correctly and that
 # TLS certificates have been signed, etc., and if not tells the user
 # what to do next.
 
 import sys, os, os.path, re, subprocess, datetime, multiprocessing.pool
+import asyncio
 
 import dns.reversename, dns.resolver
 import dateutil.parser, dateutil.tz
 import idna
 import psutil
+import postfix_mta_sts_resolver.resolver
 
 from dns_update import get_dns_zones, build_tlsa_record, get_custom_dns_config, get_secondary_dns, get_custom_dns_records
 from web_update import get_web_domains, get_domains_with_a_records
@@ -28,7 +30,7 @@ def get_services():
 		{ "name": "Spamassassin", "port": 10025, "public": False, },
 		{ "name": "OpenDKIM", "port": 8891, "public": False, },
 		{ "name": "OpenDMARC", "port": 8893, "public": False, },
-		{ "name": "wspecsbox Management Daemon", "port": 10222, "public": False, },
+		{ "name": "Mail-in-a-Box Management Daemon", "port": 10222, "public": False, },
 		{ "name": "SSH Login (ssh)", "port": get_ssh_port(), "public": True, },
 		{ "name": "Public DNS (nsd4)", "port": 53, "public": True, },
 		{ "name": "Incoming Mail (SMTP/postfix)", "port": 25, "public": True, },
@@ -278,9 +280,9 @@ def run_network_checks(env, output):
 	if ret == 0:
 		output.print_ok("Outbound mail (SMTP port 25) is not blocked.")
 	else:
-		output.print_error("""Outbound mail (SMTP port 25) seems to be blocked by your network. You
-			will not be able to send any mail. Many residential networks block port 25 to prevent hijacked
-			machines from being able to send spam. A quick connection test to Google's mail server on port 25
+		output.print_warning("""Outbound mail (SMTP port 25) seems to be blocked by your network. You
+			will not be able to send any mail without a SMTP relay. Many residential networks block port 25 to prevent
+			hijacked machines from being able to send spam. A quick connection test to Google's mail server on port 25
 			failed.""")
 
 	# Stop if the IPv4 address is listed in the ZEN Spamhaus Block List.
@@ -296,6 +298,19 @@ def run_network_checks(env, output):
 			which may prevent recipients from receiving your email. See http://www.spamhaus.org/query/ip/%s."""
 			% (env['PUBLIC_IP'], zen, env['PUBLIC_IP']))
 
+	# Check if a SMTP relay is set up. It's not strictly required, but on some providers
+	# it might be needed.
+	config = load_settings(env)
+	if config.get("SMTP_RELAY_ENABLED"):
+		if config.get("SMTP_RELAY_AUTH"):
+			output.print_ok("An authenticated SMTP relay has been set up via port 587.")
+		else:
+			output.print_warning("A SMTP relay has been set up, but it is not authenticated.")
+	elif ret == 0:
+		output.print_ok("No SMTP relay has been set up (but that's ok since port 25 is not blocked).")
+	else:
+		output.print_error("No SMTP relay has been set up. Since port 25 is blocked, you will probably not be able to send any mail.")
+
 def run_domain_checks(rounded_time, env, output, pool):
 	# Get the list of domains we handle mail for.
 	mail_domains = get_mail_domains(env)
@@ -309,8 +324,19 @@ def run_domain_checks(rounded_time, env, output, pool):
 
 	domains_to_check = mail_domains | dns_domains | web_domains
 
+	# Remove "www", "autoconfig", "autodiscover", and "mta-sts" subdomains, which we group with their parent,
+	# if their parent is in the domains to check list.
+	domains_to_check = [
+		d for d in domains_to_check
+		if not (
+		   d.split(".", 1)[0] in ("www", "autoconfig", "autodiscover", "mta-sts")
+		   and len(d.split(".", 1)) == 2
+		   and d.split(".", 1)[1] in domains_to_check
+		)
+	]
+
 	# Get the list of domains that we don't serve web for because of a custom CNAME/A record.
-	domains_with_a_records = get_domains_with_a_records(env, local=True, external=False)
+	domains_with_a_records = get_domains_with_a_records(env)
 
 	# Serial version:
 	#for domain in sort_domains(domains_to_check, env):
@@ -326,6 +352,11 @@ def run_domain_checks(rounded_time, env, output, pool):
 
 def run_domain_checks_on_domain(domain, rounded_time, env, dns_domains, dns_zonefiles, mail_domains, web_domains, domains_with_a_records):
 	output = BufferedOutput()
+
+	# When running inside Flask, the worker threads don't get a thread pool automatically.
+	# Also this method is called in a forked worker pool, so creating a new loop is probably
+	# a good idea.
+	asyncio.set_event_loop(asyncio.new_event_loop())
 
 	# we'd move this up, but this returns non-pickleable values
 	ssl_certificates = get_ssl_certificates(env)
@@ -353,6 +384,26 @@ def run_domain_checks_on_domain(domain, rounded_time, env, dns_domains, dns_zone
 
 	if domain in dns_domains:
 		check_dns_zone_suggestions(domain, env, output, dns_zonefiles, domains_with_a_records)
+
+	# Check auto-configured subdomains. See run_domain_checks.
+	# Skip mta-sts because we check the policy directly.
+	for label in ("www", "autoconfig", "autodiscover"):
+		subdomain = label + "." + domain
+		if subdomain in web_domains or subdomain in mail_domains:
+			# Run checks.
+			subdomain_output = run_domain_checks_on_domain(subdomain, rounded_time, env, dns_domains, dns_zonefiles, mail_domains, web_domains, domains_with_a_records)
+
+			# Prepend the domain name to the start of each check line, and then add to the
+			# checks for this domain.
+			for attr, args, kwargs in subdomain_output[1].buf:
+				if attr == "add_heading":
+					# Drop the heading, but use its text as the subdomain name in
+					# each line since it is in Unicode form.
+					subdomain = args[0]
+					continue
+				if len(args) == 1 and isinstance(args[0], str):
+					args = [ subdomain + ": " + args[0] ]
+				getattr(output, attr)(*args, **kwargs)
 
 	return (domain, output)
 
@@ -611,6 +662,19 @@ def check_mail_domain(domain, env, output):
 		if mx != recommended_mx:
 			good_news += "  This configuration is non-standard.  The recommended configuration is '%s'." % (recommended_mx,)
 		output.print_ok(good_news)
+
+		# Check MTA-STS policy.
+		loop = asyncio.get_event_loop()
+		sts_resolver = postfix_mta_sts_resolver.resolver.STSResolver(loop=loop)
+		valid, policy = loop.run_until_complete(sts_resolver.resolve(domain))
+		if valid == postfix_mta_sts_resolver.resolver.STSFetchResult.VALID:
+			if policy[1].get("mx") == [env['PRIMARY_HOSTNAME']] and policy[1].get("mode") == "enforce": # policy[0] is the policyid
+				output.print_ok("MTA-STS policy is present.")
+			else:
+				output.print_error("MTA-STS policy is present but has unexpected settings. [{}]".format(policy[1]))
+		else:
+			output.print_error("MTA-STS policy is missing: {}".format(valid))
+
 	else:
 		output.print_error("""This domain's DNS MX record is incorrect. It is currently set to '%s' but should be '%s'. Mail will not
 			be delivered to this box. It may take several hours for public DNS to update after a change. This problem may result from
@@ -680,7 +744,7 @@ def query_dns(qname, rtype, nxdomain='[Not Set]', at=None):
 
 	# Do the query.
 	try:
-		response = resolver.query(qname, rtype)
+		response = resolver.resolve(qname, rtype)
 	except (dns.resolver.NoNameservers, dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
 		# Host did not have an answer for this query; not sure what the
 		# difference is between the two exceptions.
@@ -775,21 +839,21 @@ def list_apt_updates(apt_update=True):
 	return pkgs
 
 def what_version_is_this(env):
-	# This function runs `git describe --abbrev=0` on the wspecsbox installation directory.
-	# Git may not be installed and wspecsbox may not have been cloned from github,
+	# This function runs `git describe --abbrev=0` on the Mail-in-a-Box installation directory.
+	# Git may not be installed and Mail-in-a-Box may not have been cloned from github,
 	# so this function may raise all sorts of exceptions.
 	miab_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-	tag = shell("check_output", ["/usr/bin/git", "describe", "--abbrev=0"], env={"GIT_DIR": os.path.join(miab_dir, '.git')}).strip()
+	tag = shell("check_output", ["/usr/bin/git", "describe", "--tags", "--abbrev=0"], env={"GIT_DIR": os.path.join(miab_dir, '.git')}).strip()
 	return tag
 
 def get_latest_miab_version():
-	# This pings https://wspecsbox.email/setup.sh and extracts the tag named in
+	# This pings https://mailinabox.email/setup.sh and extracts the tag named in
 	# the script to determine the current product version.
     from urllib.request import urlopen, HTTPError, URLError
     from socket import timeout
 
     try:
-        return re.search(b'TAG=(.*)', urlopen("https://wspecsbox.email/setup.sh?ping=1", timeout=5).read()).group(1).decode("utf8")
+        return re.search(b'TAG=(.*)', urlopen("https://raw.githubusercontent.com/ddavness/power-mailinabox/master/setup/bootstrap.sh", timeout=5).read()).group(1).decode("utf8")
     except (HTTPError, URLError, timeout):
         return None
 
@@ -802,16 +866,16 @@ def check_miab_version(env, output):
 		this_ver = "Unknown"
 
 	if config.get("privacy", True):
-		output.print_warning("You are running version wspecsbox %s. wspecsbox version check disabled by privacy setting." % this_ver)
+		output.print_warning("You are running version Mail-in-a-Box %s. Mail-in-a-Box version check disabled by privacy setting." % this_ver)
 	else:
 		latest_ver = get_latest_miab_version()
 
 		if this_ver == latest_ver:
-			output.print_ok("wspecsbox is up to date. You are running version %s." % this_ver)
+			output.print_ok("Mail-in-a-Box is up to date. You are running version %s." % this_ver)
 		elif latest_ver is None:
-			output.print_error("Latest wspecsbox version could not be determined. You are running version %s." % this_ver)
+			output.print_error("Latest Mail-in-a-Box version could not be determined. You are running version %s." % this_ver)
 		else:
-			output.print_error("A new version of wspecsbox is available. You are running version %s. The latest version is %s. For upgrade instructions, see https://wspecsbox.email. "
+			output.print_error("A new version of Mail-in-a-Box is available. You are running version %s. The latest version is %s. For upgrade instructions, see https://mailinabox.email. "
 				% (this_ver, latest_ver))
 
 def run_and_output_changes(env, pool):
@@ -825,7 +889,7 @@ def run_and_output_changes(env, pool):
 	run_checks(True, env, cur, pool)
 
 	# Load previously saved status checks.
-	cache_fn = "/var/cache/wspecsbox/status_checks.json"
+	cache_fn = "/var/cache/mailinabox/status_checks.json"
 	if os.path.exists(cache_fn):
 		prev = json.load(open(cache_fn))
 
@@ -970,13 +1034,14 @@ if __name__ == "__main__":
 	from utils import load_environment
 
 	env = load_environment()
-	pool = multiprocessing.pool.Pool(processes=10)
 
 	if len(sys.argv) == 1:
-		run_checks(False, env, ConsoleOutput(), pool)
+		with multiprocessing.pool.Pool(processes=10) as pool:
+			run_checks(False, env, ConsoleOutput(), pool)
 
 	elif sys.argv[1] == "--show-changes":
-		run_and_output_changes(env, pool)
+		with multiprocessing.pool.Pool(processes=10) as pool:
+			run_and_output_changes(env, pool)
 
 	elif sys.argv[1] == "--check-primary-hostname":
 		# See if the primary hostname appears resolvable and has a signed certificate.

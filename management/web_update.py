@@ -7,11 +7,11 @@ import os.path, re, rtyaml
 from mailconfig import get_mail_domains
 from dns_update import get_custom_dns_config, get_dns_zones
 from ssl_certificates import get_ssl_certificates, get_domain_ssl_files, check_certificate
-from utils import shell, safe_domain_name, sort_domains
+from utils import shell, safe_domain_name, sort_domains, get_php_version
 
 def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True):
 	# What domains should we serve HTTP(S) for?
-	domains = get_domains_with_a_records(env, local=True, external=False)
+	domains = set()
 
 	# Serve web for all mail domains so that we might at least
 	# provide auto-discover of email settings, and also a static website
@@ -24,11 +24,19 @@ def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True)
 		# the topmost of each domain we serve.
 		domains |= set('www.' + zone for zone, zonefile in get_dns_zones(env))
 
-	# Add Autoconfiguration domains, allowing us to serve correct SSL certs.
+	# Add Autoconfiguration domains for domains that there are user accounts at:
 	# 'autoconfig.' for Mozilla Thunderbird auto setup.
 	# 'autodiscover.' for Activesync autodiscovery.
-	domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env))
-	domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env))
+	domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
+	domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
+
+	# 'mta-sts.' for MTA-STS support for all domains that have email addresses.
+	domains |= set('mta-sts.' + maildomain for maildomain in get_mail_domains(env))
+
+	if exclude_dns_elsewhere:
+		# ...Unless the domain has an A/AAAA record that maps it to a different
+		# IP address than this box. Remove those domains from our list.
+		domains -= get_domains_with_a_records(env)
 
 	# Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail
 	# as well as Z-Push for Exchange ActiveSync. This can't be removed
@@ -40,15 +48,11 @@ def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True)
 
 	return domains
 
-def get_domains_with_a_records(env, local=False, external=True):
+def get_domains_with_a_records(env):
 	domains = set()
 	dns = get_custom_dns_config(env)
 	for domain, rtype, value in dns:
-		if not external and value not in (env['PUBLIC_IP']):
-			continue
-		if not local and value in (env['PUBLIC_IP']):
-			continue
-		if rtype == "CNAME" or rtype in ("A", "AAAA"):
+		if rtype == "CNAME" or (rtype in ("A", "AAAA") and value not in ("local", env['PUBLIC_IP'])):
 			domains.add(domain)
 	return domains
 
@@ -72,6 +76,7 @@ def do_web_update(env):
 
 	# Build an nginx configuration file.
 	nginx_conf = open(os.path.join(os.path.dirname(__file__), "../conf/nginx-top.conf")).read()
+	nginx_conf = re.sub("{{phpver}}", get_php_version(), nginx_conf)
 
 	# Load the templates.
 	template0 = open(os.path.join(os.path.dirname(__file__), "../conf/nginx.conf")).read()
@@ -154,9 +159,27 @@ def make_domain_config(domain, templates, ssl_certificates, env):
 
 			# any proxy or redirect here?
 			for path, url in yaml.get("proxies", {}).items():
+				# Parse some flags in the fragment of the URL.
+				pass_http_host_header = False
+				m = re.search("#(.*)$", url)
+				if m:
+					for flag in m.group(1).split(","):
+						if flag == "pass-http-host":
+							pass_http_host_header = True
+					url = re.sub("#(.*)$", "", url)
+
 				nginx_conf_extra += "\tlocation %s {" % path
 				nginx_conf_extra += "\n\t\tproxy_pass %s;" % url
+				if pass_http_host_header:
+					nginx_conf_extra += "\n\t\tproxy_set_header Host $http_host;"
 				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-Host $http_host;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Forwarded-Proto $scheme;"
+				nginx_conf_extra += "\n\t\tproxy_set_header X-Real-IP $remote_addr;"
+				nginx_conf_extra += "\n\t}\n"
+			for path, alias in yaml.get("aliases", {}).items():
+				nginx_conf_extra += "\tlocation %s {" % path
+				nginx_conf_extra += "\n\t\talias %s;" % alias
 				nginx_conf_extra += "\n\t}\n"
 			for path, url in yaml.get("redirects", {}).items():
 				nginx_conf_extra += "\trewrite %s %s permanent;\n" % (path, url)
@@ -166,14 +189,22 @@ def make_domain_config(domain, templates, ssl_certificates, env):
 
 	# Add the HSTS header.
 	if hsts == "yes":
-		nginx_conf_extra += "add_header Strict-Transport-Security max-age=15768000;\n"
+		nginx_conf_extra += "add_header Strict-Transport-Security \"max-age=15768000\" always;\n"
 	elif hsts == "preload":
-		nginx_conf_extra += "add_header Strict-Transport-Security \"max-age=15768000; includeSubDomains; preload\";\n"
+		nginx_conf_extra += "add_header Strict-Transport-Security \"max-age=15768000; includeSubDomains; preload\" always;\n"
 
 	# Add in any user customizations in the includes/ folder.
 	nginx_conf_custom_include = os.path.join(env["STORAGE_ROOT"], "www", safe_domain_name(domain) + ".conf")
-	if os.path.exists(nginx_conf_custom_include):
-		nginx_conf_extra += "\tinclude %s;\n" % (nginx_conf_custom_include)
+	if not os.path.exists(nginx_conf_custom_include):
+		with open(nginx_conf_custom_include, "a+") as f:
+			f.writelines([
+				f"# Custom configurations for {domain} go here\n",
+				"# To use php: use the \"php-fpm\" alias\n\n",
+				"index index.html index.htm;\n"
+			])
+	
+	nginx_conf_extra += "\tinclude %s;\n" % (nginx_conf_custom_include)
+
 	# PUT IT ALL TOGETHER
 
 	# Combine the pieces. Iteratively place each template into the "# ADDITIONAL DIRECTIVES HERE" placeholder
@@ -198,6 +229,10 @@ def get_web_root(domain, env, test_exists=True):
 		root = os.path.join(env["STORAGE_ROOT"], "www", safe_domain_name(test_domain))
 		if os.path.exists(root) or not test_exists: break
 	return root
+
+def is_default_web_root(domain, env):
+	root = os.path.join(env["STORAGE_ROOT"], "www", safe_domain_name(domain))
+	return not os.path.exists(root)
 
 def get_web_domains_info(env):
 	www_redirects = set(get_web_domains(env)) - set(get_web_domains(env, include_www_redirects=False))
