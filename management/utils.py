@@ -4,11 +4,11 @@ import os.path
 # migrate.py which runs on fresh machines before anything is installed
 # besides Python.
 
-# THE ENVIRONMENT FILE AT /etc/mailinabox.conf
+# THE ENVIRONMENT FILE AT /etc/wspecsbox.conf
 
 def load_environment():
-    # Load settings from /etc/mailinabox.conf.
-    return load_env_vars_from_file("/etc/mailinabox.conf")
+    # Load settings from /etc/wspecsbox.conf.
+    return load_env_vars_from_file("/etc/wspecsbox.conf")
 
 def load_env_vars_from_file(fn):
     # Load settings from a KEY=VALUE file.
@@ -18,7 +18,7 @@ def load_env_vars_from_file(fn):
     return env
 
 def save_environment(env):
-    with open("/etc/mailinabox.conf", "w") as f:
+    with open("/etc/wspecsbox.conf", "w") as f:
         for k, v in env.items():
             f.write("%s=%s\n" % (k, v))
 

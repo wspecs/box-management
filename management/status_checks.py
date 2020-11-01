@@ -1,4 +1,4 @@
-#!/usr/local/lib/mailinabox/env/bin/python
+#!/usr/local/lib/wspecsbox/env/bin/python
 #
 # Checks that the upstream DNS has been set correctly and that
 # TLS certificates have been signed, etc., and if not tells the user
@@ -847,13 +847,13 @@ def what_version_is_this(env):
 	return tag
 
 def get_latest_miab_version():
-	# This pings https://mailinabox.email/setup.sh and extracts the tag named in
+	# This pings https://wspecsbox.email/setup.sh and extracts the tag named in
 	# the script to determine the current product version.
     from urllib.request import urlopen, HTTPError, URLError
     from socket import timeout
 
     try:
-        return re.search(b'TAG=(.*)', urlopen("https://raw.githubusercontent.com/ddavness/power-mailinabox/master/setup/bootstrap.sh", timeout=5).read()).group(1).decode("utf8")
+        return re.search(b'TAG=(.*)', urlopen("https://raw.githubusercontent.com/ddavness/power-wspecsbox/master/setup/bootstrap.sh", timeout=5).read()).group(1).decode("utf8")
     except (HTTPError, URLError, timeout):
         return None
 
@@ -875,7 +875,7 @@ def check_miab_version(env, output):
 		elif latest_ver is None:
 			output.print_error("Latest Mail-in-a-Box version could not be determined. You are running version %s." % this_ver)
 		else:
-			output.print_error("A new version of Mail-in-a-Box is available. You are running version %s. The latest version is %s. For upgrade instructions, see https://mailinabox.email. "
+			output.print_error("A new version of Mail-in-a-Box is available. You are running version %s. The latest version is %s. For upgrade instructions, see https://wspecsbox.email. "
 				% (this_ver, latest_ver))
 
 def run_and_output_changes(env, pool):
@@ -889,7 +889,7 @@ def run_and_output_changes(env, pool):
 	run_checks(True, env, cur, pool)
 
 	# Load previously saved status checks.
-	cache_fn = "/var/cache/mailinabox/status_checks.json"
+	cache_fn = "/var/cache/wspecsbox/status_checks.json"
 	if os.path.exists(cache_fn):
 		prev = json.load(open(cache_fn))
 

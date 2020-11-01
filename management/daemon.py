@@ -607,7 +607,7 @@ def munin_cgi(filename):
 	munin-cgi-graph has several failure modes. Some write HTTP Status headers and
 	others return nonzero exit codes.
 	Situating munin_cgi between the user-agent and munin-cgi-graph enables keeping
-	the cgi script behind mailinabox's auth mechanisms and avoids additional
+	the cgi script behind wspecsbox's auth mechanisms and avoids additional
 	support infrastructure like spawn-fcgi.
 	"""
 
@@ -673,7 +673,7 @@ if __name__ == '__main__':
 		app.logger.addHandler(utils.create_syslog_handler())
 
 	# For testing on the command line, you can use `curl` like so:
-	#    curl --user $(</var/lib/mailinabox/api.key): http://localhost:10222/mail/users
+	#    curl --user $(</var/lib/wspecsbox/api.key): http://localhost:10222/mail/users
 	auth_service.write_key()
 
 	# For testing in the browser, you can copy the API key that's output to the

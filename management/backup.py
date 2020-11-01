@@ -1,4 +1,4 @@
-#!/usr/local/lib/mailinabox/env/bin/python
+#!/usr/local/lib/wspecsbox/env/bin/python
 
 # This script performs a backup of all user data:
 # 1) System services are stopped.
@@ -216,7 +216,7 @@ def perform_backup(full_backup, user_initiated=False):
 
 	# Create an global exclusive lock so that the backup script
 	# cannot be run more than one.
-	lock = Lock(name="mailinabox_backup_daemon", die=(not user_initiated))
+	lock = Lock(name="wspecsbox_backup_daemon", die=(not user_initiated))
 	if user_initiated:
 		# God forgive me for what I'm about to do
 		try:
@@ -425,7 +425,7 @@ def list_target_files(config):
 			else:
 				reason = "Unknown error." \
 						"Please check running 'management/backup.py --verify'" \
-						"from mailinabox sources to debug the issue."
+						"from wspecsbox sources to debug the issue."
 			raise ValueError("Connection to rsync host failed: {}".format(reason))
 
 	elif target.scheme == "s3":

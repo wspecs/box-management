@@ -1,4 +1,4 @@
-#!/usr/local/lib/mailinabox/env/bin/python
+#!/usr/local/lib/wspecsbox/env/bin/python
 # Utilities for installing and selecting SSL certificates.
 
 import os, os.path, re, shutil, subprocess, tempfile
