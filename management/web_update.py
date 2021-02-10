@@ -96,10 +96,12 @@ def do_web_update(env):
 			continue
 		if domain in web_domains_not_redirect:
 			# This is a regular domain.
-			if domain not in has_root_proxy_or_redirect:
-				nginx_conf += make_domain_config(domain, [template0, template1], ssl_certificates, env)
-			else:
-				nginx_conf += make_domain_config(domain, [template0], ssl_certificates, env)
+			custom_config_path = os.path.join(os.path.dirname(__file__), "../conf/" + domain + ".conf")
+			template_files = [template0, template1]
+			if os.path.exists(custom_config_path):
+				custom_template = open(custom_config_path).read()
+				template_files = [template0, custom_template, template1]
+			nginx_conf += make_domain_config(domain, template_files, ssl_certificates, env)
 		else:
 			# Add default 'www.' redirect.
 			nginx_conf += make_domain_config(domain, [template0, template3], ssl_certificates, env)
