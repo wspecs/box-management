@@ -9,54 +9,54 @@ from dns_update import get_custom_dns_config, get_dns_zones
 from ssl_certificates import get_ssl_certificates, get_domain_ssl_files, check_certificate
 from utils import shell, safe_domain_name, sort_domains, get_php_version
 
-def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True):                                                                                                                                                             
-        # What domains should we serve HTTP(S) for?                                                                                                                                                                                           
-        domains = set()                                                                                                                                                                                                                       
-                                                                                                                                                                                                                                              
-        # Serve web for all mail domains so that we might at least                                                                                                                                                                            
-        # provide auto-discover of email settings, and also a static website                                                                                                                                                                  
-        # if the user wants to make one.                                                                                                                                                                                                      
-        domains |= get_mail_domains(env)                                                                                                                                                                                                      
-                                                                                                                                                                                                                                              
-        if include_www_redirects:                                                                                                                                                                                                             
-                # Add 'www.' subdomains that we want to provide default redirects                                                                                                                                                             
-                # to the main domain for. We'll add 'www.' to any DNS zones, i.e.                                                                                                                                                             
-                # the topmost of each domain we serve.                                                                                                                                                                                        
-                domains |= set('www.' + zone for zone, zonefile in get_dns_zones(env))                                                                                                                                                        
-                                                                                                                                                                                                                                              
-        # Add Autoconfiguration domains for domains that there are user accounts at:                                                                                                                                                          
-        # 'autoconfig.' for Mozilla Thunderbird auto setup.                                                                                                                                                                                   
-        # 'autodiscover.' for Activesync autodiscovery.                                                                                                                                                                                       
-        domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env, users_only=True))                                                                                                                                   
-        domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env, users_only=True))                                                                                                                                 
-        domains |= set(get_local_custom_domains(env))                                                                                                                                                                                         
-                                                                                                                                                                                                                                              
-        # 'mta-sts.' for MTA-STS support for all domains that have email addresses.                                                                                                                                                           
-        domains |= set('mta-sts.' + maildomain for maildomain in get_mail_domains(env))                                                                                                                                                       
-                                                                                                                                                                                                                                              
-        print(domains)                                                                                                                                                                                                                        
-        if exclude_dns_elsewhere:                                                                                                                                                                                                             
-                # ...Unless the domain has an A/AAAA record that maps it to a different                                                                                                                                                       
-                # IP address than this box. Remove those domains from our list.                                                                                                                                                               
-                domains -= get_domains_with_a_records(env)                                                                                                                                                                                    
-                                                                                                                                                                                                                                              
-        # Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail                                                                                                                                                                  
-        # as well as Z-Push for Exchange ActiveSync. This can't be removed                                                                                                                                                                    
-        # by a custom A/AAAA record and is never a 'www.' redirect.                                                                                                                                                                           
-        domains.add(env['PRIMARY_HOSTNAME'])                                                                                                                                                                                                  
-                                                                                                                                                                                                                                              
-        # Sort the list so the nginx conf gets written in a stable order.                                                                                                                                                                     
-        domains = sort_domains(domains, env)                                                                                                                                                                                                  
-                                                                                                                                                                                                                                              
-        return domains                                                                                                                                                                                                                        
-                                                                                                                                                                                                                                              
-def get_local_custom_domains(env):                                                                                                                                                                                                            
-        domains = set()                                                                                                                                                                                                                       
-        dns = get_custom_dns_config(env)                                                                                                                                                                                                      
-        for domain, rtype, value in dns:                                                                                                                                                                                                      
-                if rtype == "CNAME" or (rtype in ("A", "AAAA") and value in ("local", env['PUBLIC_IP'])):                                                                                                                                     
-                        domains.add(domain)                                                                                                                                                                                                   
-        return domains
+def get_web_domains(env, include_www_redirects=True, exclude_dns_elsewhere=True):
+	# What domains should we serve HTTP(S) for?
+	domains = set()
+
+	# Serve web for all mail domains so that we might at least
+	# provide auto-discover of email settings, and also a static website
+	# if the user wants to make one.
+	domains |= get_mail_domains(env)
+
+	if include_www_redirects:
+		# Add 'www.' subdomains that we want to provide default redirects
+		# to the main domain for. We'll add 'www.' to any DNS zones, i.e.
+		# the topmost of each domain we serve.
+		domains |= set('www.' + zone for zone, zonefile in get_dns_zones(env))
+
+	# Add Autoconfiguration domains for domains that there are user accounts at:
+	# 'autoconfig.' for Mozilla Thunderbird auto setup.
+	# 'autodiscover.' for Activesync autodiscovery.
+	domains |= set('autoconfig.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
+	domains |= set('autodiscover.' + maildomain for maildomain in get_mail_domains(env, users_only=True))
+	domains |= set(get_local_custom_domains(env))
+
+	# 'mta-sts.' for MTA-STS support for all domains that have email addresses.
+	domains |= set('mta-sts.' + maildomain for maildomain in get_mail_domains(env))
+
+	print(domains)
+	if exclude_dns_elsewhere:
+		# ...Unless the domain has an A/AAAA record that maps it to a different
+		# IP address than this box. Remove those domains from our list.
+		domains -= get_domains_with_a_records(env)
+
+	# Ensure the PRIMARY_HOSTNAME is in the list so we can serve webmail
+	# as well as Z-Push for Exchange ActiveSync. This can't be removed
+	# by a custom A/AAAA record and is never a 'www.' redirect.
+	domains.add(env['PRIMARY_HOSTNAME'])
+
+	# Sort the list so the nginx conf gets written in a stable order.
+	domains = sort_domains(domains, env)
+
+	return domains
+
+def get_local_custom_domains(env):
+				domains = set()
+				dns = get_custom_dns_config(env)
+				for domain, rtype, value in dns:
+								if rtype == "CNAME" or (rtype in ("A", "AAAA") and value in ("local", env['PUBLIC_IP'])):
+												domains.add(domain)
+				return domains
 
 def get_domains_with_a_records(env):
 	domains = set()
@@ -214,7 +214,7 @@ def make_domain_config(domain, templates, ssl_certificates, env):
 				"# To use php: use the \"php-fpm\" alias\n\n",
 				"index index.html index.htm;\n"
 			])
-	
+
 	nginx_conf_extra += "\tinclude %s;\n" % (nginx_conf_custom_include)
 
 	# PUT IT ALL TOGETHER
