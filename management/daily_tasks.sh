@@ -8,6 +8,7 @@ export LANGUAGE=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export LANG=en_US.UTF-8
 export LC_TYPE=en_US.UTF-8
+set -o xtrace
 
 # On Mondays, i.e. once a week, send the administrator a report of total emails
 # sent and received so the admin might notice server abuse.
@@ -22,4 +23,4 @@ management/backup.py | management/email_administrator.py "Backup Status"
 management/ssl_certificates.py -q | management/email_administrator.py "TLS Certificate Provisioning Result"
 
 # Run status checks and email the administrator if anything changed.
-management/status_checks.py --show-changes | management/email_administrator.py "Status Checks Change Notice"
+# management/status_checks.py --show-changes | management/email_administrator.py "Status Checks Change Notice"
