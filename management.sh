@@ -108,7 +108,7 @@ hide_output systemctl enable wspecsbox.service
 cat > /etc/cron.d/wspecsbox-nightly << EOF
 # wspecsbox --- Do not edit / will be overwritten on update.
 # Run nightly tasks: backup, status checks.
-0 3 * * *	root	(cd `pwd` && management/daily_tasks.sh)
+0 3 * * *	root	(cd /usr/local/lib/wspecsbox && management/daily_tasks.sh)
 EOF
 
 # Start the management server.
